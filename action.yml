@@ -1,20 +1,16 @@
-name: 'Verify Chainguard Base Image'
-description: 'Runs cosign verify on all base images found in a Dockerfile'
-author: 'Your Name'
+name: 'Verify Base Image Signatures'
+description: 'Runs cosign verify on all base images found in a Dockerfile against a policy file'
+author: 'Sam Morris'
 
 inputs:
   dockerfile:
     description: 'Path to the Dockerfile'
     required: false
     default: 'Dockerfile'
-  certificate-oidc-issuer:
-    description: 'OIDC issuer for cosign verification'
+  policy-file:
+    description: 'Path to the image policy JSON file'
     required: false
-    default: 'https://token.actions.githubusercontent.com'
-  certificate-identity:
-    description: 'Certificate identity for cosign verification'
-    required: false
-    default: 'https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main'
+    default: 'image-policy.json'
 
 runs:
   using: 'composite'
@@ -23,19 +19,83 @@ runs:
       uses: sigstore/cosign-installer@v3
 
     - name: Verify all base images with cosign
+      id: verify
       shell: bash
       run: |
         DOCKERFILE="${{ inputs.dockerfile }}"
+        POLICY_FILE="${{ inputs.policy-file }}"
+        RESULTS=""
+        FAILED=false
 
-        grep -i '^FROM' "$DOCKERFILE" \
+        # read policies into arrays
+        POLICY_NAMES=$(jq -r '.policies[].name' "$POLICY_FILE")
+        POLICY_COUNT=$(jq '.policies | length' "$POLICY_FILE")
+
+        while read -r image; do
+          echo "Verifying: $image"
+          IMAGE_VERIFIED=false
+          IMAGE_ERRORS=""
+
+          for i in $(seq 0 $((POLICY_COUNT - 1))); do
+            POLICY_NAME=$(jq -r ".policies[$i].name" "$POLICY_FILE")
+            ISSUER=$(jq -r ".policies[$i].oidc-issuer" "$POLICY_FILE")
+            IDENTITY=$(jq -r ".policies[$i].certificate-identity" "$POLICY_FILE")
+
+            echo "  Trying policy: $POLICY_NAME"
+            if OUTPUT=$(cosign verify \
+              --certificate-oidc-issuer="$ISSUER" \
+              --certificate-identity="$IDENTITY" \
+              "$image" 2>&1 | jq 2>&1); then
+              RESULTS="${RESULTS}\n✅ \`${image}\` — verified by policy \`${POLICY_NAME}\`"
+              IMAGE_VERIFIED=true
+              break
+            else
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${OUTPUT}"
+            fi
+          done
+
+          if [ "$IMAGE_VERIFIED" = false ]; then
+            RESULTS="${RESULTS}\n❌ \`${image}\` — failed all policies${IMAGE_ERRORS}"
+            FAILED=true
+          fi
+
+        done < <(grep -i '^FROM' "$DOCKERFILE" \
           | awk '{print $2}' \
           | grep -v 'scratch' \
           | grep -v '^\$' \
-          | sort -u \
-          | while read -r image; do
-              echo "Verifying: $image"
-              cosign verify \
-                --certificate-oidc-issuer="${{ inputs.certificate-oidc-issuer }}" \
-                --certificate-identity="${{ inputs.certificate-identity }}" \
-                "$image" | jq
-            done
+          | sort -u)
+
+        echo "results<<EOF" >> $GITHUB_OUTPUT
+        echo -e "$RESULTS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        if [ "$FAILED" = true ]; then
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        else
+          echo "status=success" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Comment on PR
+      if: always() && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        STATUS="${{ steps.verify.outputs.status }}"
+
+        if [ "$STATUS" = "success" ]; then
+          HEADER="## ✅ Image Verification Passed"
+        else
+          HEADER="## ❌ Image Verification Failed"
+        fi
+
+        BODY="${HEADER}
+
+        ${{ steps.verify.outputs.results }}
+
+        <sub>Triggered by commit ${{ github.sha }}</sub>"
+
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "$BODY" \
+          --repo ${{ github.repository }}

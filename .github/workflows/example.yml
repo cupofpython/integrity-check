@@ -18,8 +18,10 @@ jobs:
       - uses: cupofpython/integrity-check@v1
         with:
           dockerfile: Dockerfile.cg
-    
+          policy-file: image-policy.json
+
       # Example with Dockerfile that uses an unsigned base image
       - uses: cupofpython/integrity-check@v1
         with:
           dockerfile: Dockerfile.dh
+          policy-file: image-policy.json
