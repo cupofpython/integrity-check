@@ -38,8 +38,8 @@ runs:
 
           for i in $(seq 0 $((POLICY_COUNT - 1))); do
             POLICY_NAME=$(jq -r ".policies[$i].name" "$POLICY_FILE")
-            ISSUER=$(jq -r ".policies[$i].oidc-issuer" "$POLICY_FILE")
-            IDENTITY=$(jq -r ".policies[$i].certificate-identity" "$POLICY_FILE")
+            ISSUER=$(jq -r ".policies[$i].oidc_issuer" "$POLICY_FILE")
+            IDENTITY=$(jq -r ".policies[$i].certificate_identity" "$POLICY_FILE")
 
             echo "  Trying policy: $POLICY_NAME"
             if OUTPUT=$(cosign verify \
