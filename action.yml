@@ -42,15 +42,16 @@ runs:
             IDENTITY=$(jq -r ".policies[$i].certificate_identity" "$POLICY_FILE")
 
             echo "  Trying policy: $POLICY_NAME"
-            if OUTPUT=$(cosign verify \
+            if COSIGN_OUTPUT=$(cosign verify \
               --certificate-oidc-issuer="$ISSUER" \
               --certificate-identity="$IDENTITY" \
-              "$image" 2>&1 | jq 2>&1); then
+              "$image" 2>&1); then
+              echo "$COSIGN_OUTPUT" | jq
               RESULTS="${RESULTS}\n✅ \`${image}\` — verified by policy \`${POLICY_NAME}\`"
               IMAGE_VERIFIED=true
               break
             else
-              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${OUTPUT}"
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${COSIGN_OUTPUT}"
             fi
           done
 
