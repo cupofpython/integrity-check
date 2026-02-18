@@ -2,13 +2,13 @@
   "policies": [
     {
       "name": "chainguard",
-      "oidc-issuer": "https://token.actions.githubusercontent.com",
-      "certificate-identity": "https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main"
+      "oidc_issuer": "https://token.actions.githubusercontent.com",
+      "certificate_identity": "https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main"
     },
     {
-      "name": "dockerhub-verified",
-      "oidc-issuer": "https://token.actions.githubusercontent.com",
-      "certificate-identity": "https://github.com/docker-library/official-images/.github/workflows/sign.yaml@refs/heads/master"
+      "name": "dockerhub-verified-publisher",
+      "oidc_issuer": "https://token.actions.githubusercontent.com",
+      "certificate_identity": "https://github.com/docker-library/official-images/.github/workflows/sign.yaml@refs/heads/master"
     }
   ]
 }
