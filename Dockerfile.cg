@@ -1,0 +1,10 @@
+FROM cgr.dev/chainguard/python:latest-dev
+
+WORKDIR /app
+COPY . .
+RUN pip install -r requirements.txt
+
+FROM cgr.dev/chainguard/python:latest
+
+COPY --from=0 /app /app
+CMD ["python", "main.py"]

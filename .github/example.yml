@@ -1,0 +1,25 @@
+name: Verify Base Image
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # needed for cosign OIDC
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Example with Dockerfile that uses a signed base image
+      - uses: cupofpython/integrity-check@v1
+        with:
+          dockerfile: Dockerfile.cg
+    
+      # Example with Dockerfile that uses an unsigned base image
+      - uses: cupofpython/integrity-check@v1
+        with:
+          dockerfile: Dockerfile.dh

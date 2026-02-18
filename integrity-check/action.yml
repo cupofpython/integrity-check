@@ -1,0 +1,41 @@
+name: 'Verify Chainguard Base Image'
+description: 'Runs cosign verify on all base images found in a Dockerfile'
+author: 'Your Name'
+
+inputs:
+  dockerfile:
+    description: 'Path to the Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  certificate-oidc-issuer:
+    description: 'OIDC issuer for cosign verification'
+    required: false
+    default: 'https://token.actions.githubusercontent.com'
+  certificate-identity:
+    description: 'Certificate identity for cosign verification'
+    required: false
+    default: 'https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Verify all base images with cosign
+      shell: bash
+      run: |
+        DOCKERFILE="${{ inputs.dockerfile }}"
+
+        grep -i '^FROM' "$DOCKERFILE" \
+          | awk '{print $2}' \
+          | grep -v 'scratch' \
+          | grep -v '^\$' \
+          | sort -u \
+          | while read -r image; do
+              echo "Verifying: $image"
+              cosign verify \
+                --certificate-oidc-issuer="${{ inputs.certificate-oidc-issuer }}" \
+                --certificate-identity="${{ inputs.certificate-identity }}" \
+                "$image" | jq
+            done
