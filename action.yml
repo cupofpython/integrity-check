@@ -21,38 +21,105 @@ runs:
     - name: Verify all base images with cosign
       shell: bash
       run: |
+        set -o pipefail
+
         DOCKERFILE="${{ inputs.dockerfile }}"
         POLICY_FILE="${{ inputs.policy-file }}"
+
+        if [ ! -f "$DOCKERFILE" ]; then
+          echo "Dockerfile not found: $DOCKERFILE"
+          exit 1
+        fi
+
+        if [ ! -f "$POLICY_FILE" ]; then
+          echo "Policy file not found: $POLICY_FILE"
+          exit 1
+        fi
+
         POLICY_COUNT=$(jq '.policies | length' "$POLICY_FILE")
 
-        grep -i '^FROM' "$DOCKERFILE" \
-          | awk '{print $2}' \
-          | grep -v 'scratch' \
-          | grep -v '^\$' \
-          | sort -u \
-          | while read -r image; do
-              echo "Verifying: $image"
-              IMAGE_VERIFIED=false
+        if [ "$POLICY_COUNT" -eq 0 ]; then
+          echo "No policies found in $POLICY_FILE"
+          exit 1
+        fi
 
-              for i in $(seq 0 $((POLICY_COUNT - 1))); do
-                POLICY_NAME=$(jq -r ".policies[$i].name" "$POLICY_FILE")
-                ISSUER=$(jq -r ".policies[$i].oidc_issuer" "$POLICY_FILE")
-                IDENTITY=$(jq -r ".policies[$i].certificate_identity" "$POLICY_FILE")
-
-                echo "  Trying policy: $POLICY_NAME"
-                if cosign verify \
-                  --certificate-oidc-issuer="$ISSUER" \
-                  --certificate-identity="$IDENTITY" \
-                  "$image" | jq; then
-                  IMAGE_VERIFIED=true
+        extract_images() {
+          awk '
+            BEGIN { IGNORECASE = 1 }
+            /^[[:space:]]*FROM[[:space:]]+/ {
+              for (i = 2; i <= NF; i++) {
+                if ($i ~ /^--platform=/) {
+                  continue
+                }
+                if (toupper($i) == "AS") {
                   break
-                fi
-              done
+                }
+                print $i
+                break
+              }
+            }
+          ' "$DOCKERFILE" \
+          | grep -v '^scratch$' \
+          | grep -v '^\$' \
+          | sort -u
+        }
 
-              if [ "$IMAGE_VERIFIED" = false ]; then
-                echo "❌ $image failed all policies"
-                exit 1
-              fi
+        IMAGES=$(extract_images)
 
-              echo "✅ $image verified"
-            done
+        if [ -z "$IMAGES" ]; then
+          echo "No base images found in $DOCKERFILE"
+          exit 0
+        fi
+
+        while read -r image; do
+          [ -z "$image" ] && continue
+
+          echo "Verifying: $image"
+          IMAGE_VERIFIED=false
+          IMAGE_ERRORS=""
+
+          for i in $(seq 0 $((POLICY_COUNT - 1))); do
+            POLICY_NAME=$(jq -r ".policies[$i].name" "$POLICY_FILE")
+            ISSUER=$(jq -r ".policies[$i].oidc_issuer" "$POLICY_FILE")
+            IDENTITY=$(jq -r ".policies[$i].certificate_identity // empty" "$POLICY_FILE")
+            IDENTITY_REGEXP=$(jq -r ".policies[$i].certificate_identity_regexp // empty" "$POLICY_FILE")
+
+            echo "  Trying policy: $POLICY_NAME"
+
+            COSIGN_ARGS=(
+              verify
+              --certificate-oidc-issuer="$ISSUER"
+            )
+
+            if [ -n "$IDENTITY" ] && [ -n "$IDENTITY_REGEXP" ]; then
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: policy cannot define both certificate_identity and certificate_identity_regexp"
+              continue
+            fi
+
+            if [ -n "$IDENTITY" ]; then
+              COSIGN_ARGS+=(--certificate-identity="$IDENTITY")
+            elif [ -n "$IDENTITY_REGEXP" ]; then
+              COSIGN_ARGS+=(--certificate-identity-regexp="$IDENTITY_REGEXP")
+            else
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: policy must define either certificate_identity or certificate_identity_regexp"
+              continue
+            fi
+
+            COSIGN_ARGS+=("$image")
+
+            if COSIGN_OUTPUT=$(cosign "${COSIGN_ARGS[@]}" 2>&1); then
+              echo "$COSIGN_OUTPUT" | jq .
+              IMAGE_VERIFIED=true
+              echo "✅ $image verified by policy $POLICY_NAME"
+              break
+            else
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${COSIGN_OUTPUT}"
+            fi
+          done
+
+          if [ "$IMAGE_VERIFIED" = false ]; then
+            echo "❌ $image failed all policies"
+            printf '%b\n' "$IMAGE_ERRORS"
+            exit 1
+          fi
+        done <<< "$IMAGES"
