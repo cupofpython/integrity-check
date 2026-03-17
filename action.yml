@@ -88,6 +88,7 @@ runs:
 
             COSIGN_ARGS=(
               verify
+              --output=json
               --certificate-oidc-issuer="$ISSUER"
             )
 
@@ -107,13 +108,21 @@ runs:
 
             COSIGN_ARGS+=("$image")
 
-            if COSIGN_OUTPUT=$(cosign "${COSIGN_ARGS[@]}" 2>&1); then
-              echo "$COSIGN_OUTPUT" | jq .
+            COSIGN_STDERR=$(mktemp)
+            if COSIGN_OUTPUT=$(cosign "${COSIGN_ARGS[@]}" 2>"$COSIGN_STDERR"); then
+              if echo "$COSIGN_OUTPUT" | jq . >/dev/null 2>&1; then
+                echo "$COSIGN_OUTPUT" | jq .
+              else
+                echo "$COSIGN_OUTPUT"
+              fi
               IMAGE_VERIFIED=true
               echo "✅ $image verified by policy $POLICY_NAME"
+              rm -f "$COSIGN_STDERR"
               break
             else
-              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${COSIGN_OUTPUT}"
+              COSIGN_ERROR=$(cat "$COSIGN_STDERR")
+              rm -f "$COSIGN_STDERR"
+              IMAGE_ERRORS="${IMAGE_ERRORS}\n  - \`${POLICY_NAME}\` failed: ${COSIGN_ERROR}"
             fi
           done
 
